@@ -9,10 +9,12 @@ var mongoose = require('mongoose')
 
 var mode = 'update';
 var database = 'index';
+var blockNumber = 1; //default block start for check is 1.
+var blockEnd = 9; //just a random init number, it's overwritten uppon switch/case anyways.
 
 // displays usage and exits
 function usage() {
-  console.log('Usage: node scripts/sync.js [database] [mode]');
+  console.log('Usage: node scripts/sync.js [database] [mode] [StartingBlock] [EndingBlock]');
   console.log('');
   console.log('database: (required)');
   console.log('index [mode] Main index: coin info/stats, transactions & addresses');
@@ -21,6 +23,8 @@ function usage() {
   console.log('mode: (required for index database only)');
   console.log('update       Updates index from last sync to current block');
   console.log('check        checks index for (and adds) any missing transactions/addresses');
+  console.log('             check now accepts a starting Block and Ending Block.'); //mm add description 1
+  console.log('             If no value is provided, it will use default settings.');//mm add description 2
   console.log('reindex      Clears index then resyncs from genesis to current block');
   console.log('');
   console.log('notes:'); 
@@ -36,20 +40,25 @@ function usage() {
 if (process.argv[2] == 'index') {
   if (process.argv.length <3) {
     usage();
-  } else {
+ } else {
     switch(process.argv[3])
     {
     case 'update':
       mode = 'update';
+      console.log("mode is update");
       break;
     case 'check':
       mode = 'check';
+      blockNumber = parseInt(process.argv[4]); //this gets the 4th argument from the command line, the block start, also converts the number from a string to a number.
+      blockEnd = parseInt(process.argv[5]); //this gets the 5th argument from the command line, the end block
+      if (isNaN(blockNumber)){ blockNumber = 1; }  //yay this fixes NaN
+      if (isNaN(blockEnd)){ blockEnd = 99999999; } //if there is no variable provided, give it a huge number.
       break;
     case 'reindex':
       mode = 'reindex';
       break;
     default:
-      usage();
+     usage();
     }
   }
 } else if (process.argv[2] == 'market'){
@@ -60,7 +69,9 @@ if (process.argv[2] == 'index') {
 
 function create_lock(cb) {
   if ( database == 'index' ) {
-    var fname = './tmp/' + database + '.pid';
+    //if the argument #3 is check, we name the file differently for anti-collision.
+    if (process.argv[3] == 'check' ) { var fname = './tmp/' + database + '-' + blockNumber + '.pid'; }
+    else { var fname = './tmp/' + database + '.pid'; }
     fs.appendFile(fname, process.pid, function (err) {
       if (err) {
         console.log("Error: unable to create %s", fname);
@@ -76,7 +87,9 @@ function create_lock(cb) {
 
 function remove_lock(cb) {
   if ( database == 'index' ) {
-    var fname = './tmp/' + database + '.pid';
+    //if the argument #3 is check, we name the file differently for anti-collision.
+    if ( process.argv[3] == 'check' ) { var fname = './tmp/' + database + '-' + blockNumber + '.pid'; }
+    else { var fname = './tmp/' + database + '.pid'; }
     fs.unlink(fname, function (err){
       if(err) {
         console.log("unable to remove lock: %s", fname);
@@ -92,7 +105,9 @@ function remove_lock(cb) {
 
 function is_locked(cb) {
   if ( database == 'index' ) {
-    var fname = './tmp/' + database + '.pid';
+    //if the argument #3 is check, we name the file differently for anti-collision.
+    if ( process.argv[3] == 'check' ) { var fname = './tmp/' + database + '-' + blockNumber + '.pid'; }
+    else { var fname = './tmp/' + database + '.pid'; }
     fs.exists(fname, function (exists){
       if(exists) {
         return cb(true);
@@ -111,6 +126,27 @@ function exit() {
     process.exit(0);
   });
 }
+
+//pull for fixing lock file on crash. doesn't give us any info on what crashed though. remove to see crash info.
+process.on('uncaughtException', exitCrash);
+process.on('SIGINT', exitSIGINT);
+
+function exitSIGINT() {
+ console.log("Received kill signal, Exiting!");
+ remove_lock(function(){
+    mongoose.disconnect();
+    process.exit(0);
+  });
+}
+
+function exitCrash() {
+console.log("Program Crashed, Exiting Now."); //added a print so we can see it's exiting abnormally.
+  remove_lock(function(){
+    mongoose.disconnect();
+    process.exit(0);
+  });
+}
+
 
 var dbString = 'mongodb://' + settings.dbsettings.user;
 dbString = dbString + ':' + settings.dbsettings.password;
@@ -169,7 +205,8 @@ is_locked(function (exists) {
                       });
                     });              
                   } else if (mode == 'check') {
-                    db.update_tx_db(settings.coin, 1, stats.count, settings.check_timeout, function(){
+		    if (blockEnd == 99999999) { blockEnd = stats.count; } //fix the arbitrary number, give a REAL number for the block end!
+                    db.update_tx_db(settings.coin, blockNumber, blockEnd, settings.check_timeout, function(){//orig blockNumber was 1. stats.count for real end of blocks.
                       db.get_stats(settings.coin, function(nstats){
                         console.log('check complete (block: %s)', nstats.last);
                         exit();
