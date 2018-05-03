@@ -11,10 +11,11 @@ var mode = 'update';
 var database = 'index';
 var blockNumber = 1; //default block start for check is 1.
 var blockEnd = 9; //just a random init number, it's overwritten uppon switch/case anyways.
+var updateRL = 1;
 
 // displays usage and exits
 function usage() {
-  console.log('Usage: node scripts/sync.js [database] [mode] [StartingBlock] [EndingBlock]');
+  console.log('Usage: node scripts/sync.js [database] [mode] [StartingBlock/Update Richlist] [EndingBlock]');
   console.log('');
   console.log('database: (required)');
   console.log('index [mode] Main index: coin info/stats, transactions & addresses');
@@ -22,6 +23,8 @@ function usage() {
   console.log('');
   console.log('mode: (required for index database only)');
   console.log('update       Updates index from last sync to current block');
+  console.log('             Update now has an option to enable or disable Richlist updating');//mm add descritpion
+  console.log('             by supplying a 1 to enable, or 0 to disable, after the mode option '); //mm add description
   console.log('check        checks index for (and adds) any missing transactions/addresses');
   console.log('             check now accepts a starting Block and Ending Block.'); //mm add description 1
   console.log('             If no value is provided, it will use default settings.');//mm add description 2
@@ -45,7 +48,8 @@ if (process.argv[2] == 'index') {
     {
     case 'update':
       mode = 'update';
-      console.log("mode is update");
+	updateRL=parseInt(process.argv[4]); //check the argument, if 1 enable, if 0 disable
+	if (isNaN(updateRL)){updateRL=1;} //if NaN then enable, since that is a no-argument response
       break;
     case 'check':
       mode = 'check';
@@ -130,6 +134,7 @@ function exit() {
 //pull for fixing lock file on crash. doesn't give us any info on what crashed though. remove to see crash info.
 process.on('uncaughtException', exitCrash);
 process.on('SIGINT', exitSIGINT);
+process.on('SIGTERM', exitSIGINT);
 
 function exitSIGINT() {
  console.log("Received kill signal, Exiting!");
@@ -208,22 +213,32 @@ is_locked(function (exists) {
 		    if (blockEnd == 99999999) { blockEnd = stats.count; } //fix the arbitrary number, give a REAL number for the block end!
                     db.update_tx_db(settings.coin, blockNumber, blockEnd, settings.check_timeout, function(){//orig blockNumber was 1. stats.count for real end of blocks.
                       db.get_stats(settings.coin, function(nstats){
-                        console.log('check complete (block: %s)', nstats.last);
+                        console.log('Check Complete (Block: %s)', nstats.last);
                         exit();
                       });
                     });
                   } else if (mode == 'update') {
-                    db.update_tx_db(settings.coin, stats.last, stats.count, settings.update_timeout, function(){
-                      db.update_richlist('received', function(){
-                        db.update_richlist('balance', function(){
+		     if (updateRL == 1) {
+                      db.update_tx_db(settings.coin, stats.last, stats.count, settings.update_timeout, function(){console.log('Block Update Done, Updating the Richlist');
+                        db.update_richlist('received', function(){console.log('Done Updating The Richlist Received, Now Updating The Richlist Balances');
+                         db.update_richlist('balance', function(){console.log('Done Updating The Richlist Balances, Now Updating Stats');
                           db.get_stats(settings.coin, function(nstats){
-                            console.log('update complete (block: %s)', nstats.last);
+                            console.log('Update Complete (Block: %s)', nstats.last);
                             exit();
-                          });
+                         });
                         });
                       });
                     });
-                  }
+                  } //end if updateRL=1
+		     if (updateRL == 0) {
+                      db.update_tx_db(settings.coin, stats.last, stats.count, settings.update_timeout, function(){console.log('Block Update Done');
+                        db.get_stats(settings.coin, function(nstats){
+                          console.log('Update Complete (Block: %s)', nstats.last);
+                           exit();
+                      });
+                    });
+                  }//end if updateRL=0
+		}//end mode update
                 });
               });
             }
